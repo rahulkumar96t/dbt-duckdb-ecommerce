@@ -1,0 +1,85 @@
+sources:
+  - name: shop
+    description: >
+      Raw extracts from the shop backend, landed as parquet files by `shop-data generate`.
+      DuckDB reads them in place through dbt-duckdb's `external_location`.
+    config:
+      external_location: "{{ env_var('SHOP_RAW_DIR', 'data/raw') }}/{name}.parquet"
+      loaded_at_field: _loaded_at
+      freshness:
+        warn_after: {count: 24, period: hour}
+        error_after: {count: 72, period: hour}
+    tables:
+      - name: customers
+        description: One row per customer in its state at extraction time (mutable).
+        columns:
+          - name: customer_id
+            description: Primary key.
+            data_tests: [unique, not_null]
+          - name: email
+            description: E-mail as typed; may contain upper case and surrounding spaces.
+          - name: country_code
+            description: ISO 3166-1 alpha-2, occasionally lower case.
+          - name: loyalty_tier
+            description: bronze / silver / gold; upgraded by spend over time.
+          - name: updated_at
+            description: Last change to any tracked attribute; drives the SCD2 snapshot.
+            data_tests: [not_null]
+          - name: _loaded_at
+            description: When the extract was written (UTC); used for source freshness.
+
+      - name: products
+        description: Product catalogue, including discontinued products (`is_active = false`).
+        columns:
+          - name: product_id
+            description: Primary key.
+            data_tests: [unique, not_null]
+
+      - name: orders
+        description: One row per order with lifecycle timestamps as known at extraction time.
+        columns:
+          - name: order_id
+            description: Primary key.
+            data_tests: [unique, not_null]
+          - name: customer_id
+            description: Ordering customer.
+            data_tests:
+              - not_null
+              - relationships:
+                  arguments:
+                    to: source('shop', 'customers')
+                    field: customer_id
+          - name: status
+            description: Lifecycle status; source system mixes upper and lower case.
+
+      - name: order_items
+        description: Order lines with the unit price charged at purchase time.
+        columns:
+          - name: order_item_id
+            description: Primary key.
+            data_tests: [unique, not_null]
+
+      - name: payments
+        description: >
+          Payment attempts and refunds. Amounts are integer minor units (cents), as payment
+          providers report them. Failed attempts are kept.
+        columns:
+          - name: payment_id
+            description: Primary key.
+            data_tests: [unique, not_null]
+
+  - name: web
+    description: Client-side event stream, delivered at least once (duplicates happen).
+    config:
+      external_location: "{{ env_var('SHOP_RAW_DIR', 'data/raw') }}/web_{name}.parquet"
+      loaded_at_field: _loaded_at
+      freshness:
+        warn_after: {count: 6, period: hour}
+        error_after: {count: 48, period: hour}
+    tables:
+      - name: events
+        description: Page views, product views, cart and checkout events, purchases.
+        columns:
+          - name: event_id
+            description: Event key; NOT unique in raw because of duplicate delivery.
+            data_tests: [not_null]

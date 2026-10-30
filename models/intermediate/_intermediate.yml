@@ -1,0 +1,140 @@
+models:
+  - name: int_order_items__enriched
+    description: Order lines joined to the catalogue, with cost of goods and gross margin.
+    columns:
+      - name: order_item_id
+        description: Primary key.
+        data_tests: [unique, not_null]
+      - name: order_id
+        description: Parent order.
+      - name: product_id
+        description: Product sold.
+      - name: product_name
+        description: Product display name.
+      - name: category
+        description: Product category.
+      - name: quantity
+        description: Units.
+      - name: unit_price
+        description: Price per unit at purchase time.
+      - name: discount_amount
+        description: Line discount.
+      - name: gross_amount
+        description: quantity x unit_price.
+      - name: line_total
+        description: Amount charged for the line after discount.
+      - name: cogs
+        description: quantity x current unit cost.
+      - name: gross_margin
+        description: line_total - cogs. Can be negative for deep discounts.
+
+  - name: int_orders__totals
+    description: Line-level amounts rolled up to one row per order.
+    columns:
+      - name: order_id
+        description: Primary key.
+        data_tests: [unique, not_null]
+      - name: line_count
+        description: Number of order lines.
+      - name: units
+        description: Units across all lines.
+      - name: gross_amount
+        description: Sum of quantity x unit_price.
+      - name: discount_amount
+        description: Sum of line discounts.
+      - name: items_subtotal
+        description: Merchandise amount charged (after discounts, before shipping).
+      - name: cogs
+        description: Cost of goods for the order.
+
+  - name: int_payments__order_summary
+    description: >
+      Payment events rolled up per order. `net_paid` is succeeded charges minus succeeded
+      refunds; failed attempts are counted but never contribute money.
+    columns:
+      - name: order_id
+        description: Primary key.
+        data_tests: [unique, not_null]
+      - name: payment_events
+        description: All payment rows for the order, including failures and refunds.
+      - name: failed_charges
+        description: Declined charge attempts.
+      - name: charged_amount
+        description: Sum of succeeded charges.
+      - name: refunded_amount
+        description: Sum of succeeded refunds.
+      - name: net_paid
+        description: charged_amount - refunded_amount.
+      - name: payment_methods
+        description: Comma-separated, sorted list of methods with a captured charge.
+      - name: first_captured_at
+        description: Time of the first succeeded charge.
+
+  - name: int_web__sessions
+    description: >
+      One row per web / app session with the furthest funnel steps reached. Step flags are
+      taken from the events as they are (no implied steps), so the funnel monotonicity test
+      can catch tracking gaps.
+    columns:
+      - name: session_id
+        description: Primary key.
+        data_tests: [unique, not_null]
+      - name: customer_id
+        description: Logged-in customer, if any event of the session carried one.
+      - name: anonymous_id
+        description: Device identifier of the first event.
+      - name: device
+        description: Device of the first event.
+      - name: utm_source
+        description: Traffic source of the first event.
+      - name: session_started_at
+        description: First event time.
+      - name: session_ended_at
+        description: Last event time.
+      - name: event_count
+        description: Events in the session (after de-duplication).
+      - name: has_product_view
+        description: At least one product_view event.
+      - name: has_add_to_cart
+        description: At least one add_to_cart event.
+      - name: has_checkout
+        description: At least one begin_checkout event.
+      - name: has_purchase
+        description: At least one purchase event.
+      - name: order_id
+        description: Order created in the session, if any.
+
+unit_tests:
+  - name: payments_summary_ignores_failures_and_nets_refunds
+    description: >
+      A declined attempt followed by a successful retry counts once; a split gift-card + card
+      payment that is fully refunded nets to zero.
+    model: int_payments__order_summary
+    given:
+      - input: ref('stg_shop__payments')
+        rows:
+          - {payment_id: 1, order_id: 1, payment_method: card, payment_type: charge, payment_status: failed, amount: 50.00, created_at: "2026-01-01 10:00:00"}
+          - {payment_id: 2, order_id: 1, payment_method: card, payment_type: charge, payment_status: succeeded, amount: 50.00, created_at: "2026-01-01 10:01:00"}
+          - {payment_id: 3, order_id: 2, payment_method: gift_card, payment_type: charge, payment_status: succeeded, amount: 25.00, created_at: "2026-01-02 09:00:00"}
+          - {payment_id: 4, order_id: 2, payment_method: card, payment_type: charge, payment_status: succeeded, amount: 14.90, created_at: "2026-01-02 09:00:01"}
+          - {payment_id: 5, order_id: 2, payment_method: gift_card, payment_type: refund, payment_status: succeeded, amount: 25.00, created_at: "2026-01-09 12:00:00"}
+          - {payment_id: 6, order_id: 2, payment_method: card, payment_type: refund, payment_status: succeeded, amount: 14.90, created_at: "2026-01-09 12:00:00"}
+    expect:
+      rows:
+        - {order_id: 1, payment_events: 2, failed_charges: 1, charged_amount: 50.00, refunded_amount: 0.00, net_paid: 50.00, payment_methods: card}
+        - {order_id: 2, payment_events: 4, failed_charges: 0, charged_amount: 39.90, refunded_amount: 39.90, net_paid: 0.00, payment_methods: "card,gift_card"}
+
+  - name: sessions_take_attributes_from_the_first_event
+    description: Device and source come from the first event; step flags reflect real events only.
+    model: int_web__sessions
+    given:
+      - input: ref('stg_web__events')
+        rows:
+          - {event_id: 1, session_id: s1, anonymous_id: a1, customer_id: null, event_type: page_view, product_id: null, order_id: null, device: mobile_web, utm_source: instagram, occurred_at: "2026-02-01 08:00:00"}
+          - {event_id: 2, session_id: s1, anonymous_id: a1, customer_id: 7, event_type: product_view, product_id: 3, order_id: null, device: desktop, utm_source: direct, occurred_at: "2026-02-01 08:01:00"}
+          - {event_id: 3, session_id: s1, anonymous_id: a1, customer_id: 7, event_type: add_to_cart, product_id: 3, order_id: null, device: desktop, utm_source: direct, occurred_at: "2026-02-01 08:02:00"}
+          - {event_id: 4, session_id: s2, anonymous_id: a2, customer_id: null, event_type: page_view, product_id: null, order_id: null, device: desktop, utm_source: google, occurred_at: "2026-02-01 09:00:00"}
+    expect:
+      rows:
+        - {session_id: s1, customer_id: 7, device: mobile_web, utm_source: instagram, event_count: 3, has_product_view: true, has_add_to_cart: true, has_checkout: false, has_purchase: false}
+        - {session_id: s2, customer_id: null, device: desktop, utm_source: google, event_count: 1, has_product_view: false, has_add_to_cart: false, has_checkout: false, has_purchase: false}

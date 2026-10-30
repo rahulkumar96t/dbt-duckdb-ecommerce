@@ -1,0 +1,29 @@
+exposures:
+  - name: commercial_kpi_dashboard
+    label: Commercial KPI dashboard
+    type: dashboard
+    maturity: medium
+    description: >
+      Weekly trading dashboard: revenue and margin, funnel conversion by traffic source and
+      device, cohort retention curves. Reads only from marts.
+    depends_on:
+      - ref('fct_orders')
+      - ref('fct_conversion_funnel')
+      - ref('fct_cohort_retention')
+    owner:
+      name: Analytics Engineering
+      email: analytics@example.com
+
+  - name: crm_segment_export
+    label: CRM segment export
+    type: application
+    maturity: low
+    description: >
+      Nightly export of RFM segments and lifecycle status to the e-mail tool for win-back and
+      loyalty campaigns.
+    depends_on:
+      - ref('customer_lifetime_value')
+      - ref('dim_customers')
+    owner:
+      name: CRM team
+      email: crm@example.com

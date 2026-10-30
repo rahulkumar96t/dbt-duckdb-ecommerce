@@ -1,0 +1,9 @@
+# Project-local profile: no ~/.dbt/profiles.yml needed. dbt picks it up because the Makefile
+# and CI pass --profiles-dir . (or set DBT_PROFILES_DIR).
+shop_analytics:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: "{{ env_var('SHOP_DUCKDB_PATH', 'warehouse/shop.duckdb') }}"
+      threads: 4

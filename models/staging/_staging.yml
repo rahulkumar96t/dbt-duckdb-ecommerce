@@ -1,0 +1,225 @@
+models:
+  - name: stg_shop__customers
+    description: Customers with normalised e-mail and country code. One row per customer.
+    columns:
+      - name: customer_id
+        description: Primary key.
+        data_tests: [unique, not_null]
+      - name: email
+        description: Lower-cased, trimmed e-mail address.
+        data_tests:
+          - not_null
+          - unique
+          - is_normalised_text
+      - name: country_code
+        description: Upper-case ISO 3166-1 alpha-2 country code.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [DE, FR, NL, ES, IT, AT, CH, BE, PL, SE]
+      - name: acquisition_channel
+        description: Marketing channel of the first visit.
+      - name: loyalty_tier
+        description: Current loyalty tier.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [bronze, silver, gold]
+      - name: first_name
+        description: Given name (synthetic).
+      - name: last_name
+        description: Family name (synthetic).
+      - name: signup_at
+        description: Account creation time (UTC).
+        data_tests: [not_null]
+      - name: updated_at
+        description: Last change to a tracked attribute.
+
+  - name: stg_shop__products
+    description: Product catalogue with prices cast to exact decimals.
+    columns:
+      - name: product_id
+        description: Primary key.
+        data_tests: [unique, not_null]
+      - name: sku
+        description: Stock keeping unit, unique per product.
+        data_tests: [unique, not_null]
+      - name: product_name
+        description: Display name.
+      - name: category
+        description: Merchandising category.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [apparel, footwear, accessories, home, beauty, electronics]
+      - name: unit_price
+        description: Current list price (EUR).
+        data_tests: [not_null, non_negative]
+      - name: unit_cost
+        description: Unit cost of goods (EUR).
+        data_tests: [not_null, non_negative]
+      - name: is_active
+        description: False once the product is discontinued.
+      - name: created_at
+        description: When the product was listed.
+      - name: updated_at
+        description: Last change to the product record.
+
+  - name: stg_shop__orders
+    description: Orders with a normalised, lower-case status.
+    columns:
+      - name: order_id
+        description: Primary key.
+        data_tests: [unique, not_null]
+      - name: customer_id
+        description: Ordering customer.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_shop__customers')
+                field: customer_id
+      - name: order_status
+        description: placed, shipped, delivered, cancelled or returned.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [placed, shipped, delivered, cancelled, returned]
+      - name: channel
+        description: web or app.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [web, app]
+      - name: placed_at
+        description: Order time (UTC).
+        data_tests: [not_null]
+      - name: order_date
+        description: Calendar date of `placed_at`.
+      - name: shipped_at
+        description: Hand-over to the carrier; null until it happened.
+      - name: delivered_at
+        description: Delivery confirmation; null until it happened.
+      - name: cancelled_at
+        description: Cancellation time, if cancelled before shipping.
+      - name: returned_at
+        description: Return received, if returned.
+      - name: shipping_amount
+        description: Shipping fee charged (EUR).
+        data_tests: [non_negative]
+      - name: updated_at
+        description: Latest lifecycle timestamp.
+
+  - name: stg_shop__order_items
+    description: Order lines with exact decimal amounts. One row per order line.
+    columns:
+      - name: order_item_id
+        description: Primary key.
+        data_tests: [unique, not_null]
+      - name: order_id
+        description: Parent order.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_shop__orders')
+                field: order_id
+      - name: product_id
+        description: Product sold.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_shop__products')
+                field: product_id
+      - name: quantity
+        description: Units on the line.
+        data_tests:
+          - accepted_range:
+              arguments:
+                min_value: 1
+                max_value: 10
+      - name: unit_price
+        description: Price per unit charged at purchase time.
+      - name: discount_amount
+        description: Promotion discount on the line.
+        data_tests: [non_negative]
+      - name: gross_amount
+        description: quantity x unit_price.
+      - name: line_total
+        description: gross_amount - discount_amount.
+        data_tests: [non_negative]
+
+  - name: stg_shop__payments
+    description: Payment attempts and refunds, amounts converted from cents to decimal EUR.
+    columns:
+      - name: payment_id
+        description: Primary key.
+        data_tests: [unique, not_null]
+      - name: order_id
+        description: Order paid for.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_shop__orders')
+                field: order_id
+      - name: payment_method
+        description: card, paypal, klarna or gift_card.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [card, paypal, klarna, gift_card]
+      - name: payment_type
+        description: charge or refund.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [charge, refund]
+      - name: payment_status
+        description: succeeded or failed.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [succeeded, failed]
+      - name: amount
+        description: Amount in EUR (always positive; the type says which direction).
+        data_tests: [not_null, non_negative]
+      - name: created_at
+        description: When the attempt was made.
+
+  - name: stg_web__events
+    description: Web and app events, de-duplicated to one row per event_id.
+    columns:
+      - name: event_id
+        description: Primary key after de-duplication.
+        data_tests: [unique, not_null]
+      - name: session_id
+        description: Client session.
+        data_tests: [not_null]
+      - name: anonymous_id
+        description: Device cookie / install id.
+      - name: customer_id
+        description: Logged-in customer, null for anonymous sessions.
+      - name: event_type
+        description: Funnel step.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [page_view, product_view, add_to_cart, begin_checkout, purchase]
+      - name: product_id
+        description: Product for product_view and add_to_cart events.
+      - name: order_id
+        description: Order created by a purchase event.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_shop__orders')
+                field: order_id
+      - name: device
+        description: desktop, mobile_web or app.
+      - name: utm_source
+        description: Traffic source of the session.
+      - name: occurred_at
+        description: Client timestamp (UTC).
+        data_tests: [not_null]

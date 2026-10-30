@@ -1,0 +1,44 @@
+snapshots:
+  - name: snap_customers
+    description: >
+      Type-2 history of the raw customer record. Each `dbt snapshot` (or `dbt build`) compares
+      the current extract with the stored history by `updated_at` and closes / opens validity
+      windows for customers whose loyalty tier, e-mail or country changed. History only starts
+      at the first run: earlier attribute values are unknown.
+    relation: source('shop', 'customers')
+    config:
+      unique_key: customer_id
+      strategy: timestamp
+      updated_at: updated_at
+    columns:
+      - name: customer_id
+        description: Business key.
+        data_tests: [not_null]
+      - name: dbt_scd_id
+        description: Surrogate key of the version.
+        data_tests: [unique, not_null]
+      - name: dbt_valid_from
+        description: Start of the version's validity (the record's updated_at).
+        data_tests: [not_null]
+      - name: dbt_valid_to
+        description: End of validity; null for the current version.
+      - name: dbt_updated_at
+        description: The source updated_at that produced this version.
+      - name: first_name
+        description: Given name as extracted.
+      - name: last_name
+        description: Family name as extracted.
+      - name: email
+        description: E-mail as extracted (uncleaned; cleaned in dim_customers_history).
+      - name: country_code
+        description: Country code as extracted (uncleaned).
+      - name: acquisition_channel
+        description: First-touch marketing channel.
+      - name: loyalty_tier
+        description: Loyalty tier in this version.
+      - name: signup_at
+        description: Account creation time.
+      - name: updated_at
+        description: Source change timestamp used by the timestamp strategy.
+      - name: _loaded_at
+        description: Load time of the extract that first showed this version.

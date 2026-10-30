@@ -1,0 +1,23 @@
+# Python / tooling
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+*.egg-info/
+
+# dbt
+target/
+logs/
+dbt_packages/
+.user.yml
+
+# Generated data and the local warehouse
+data/
+warehouse/
+*.duckdb
+*.duckdb.wal
+
+.DS_Store

@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install (locked)
+        run: uv sync --locked
+
+      - name: Lint
+        run: |
+          uv run ruff format --check .
+          uv run ruff check .
+
+      - name: Python tests (generator + dbt project on a small load)
+        run: uv run pytest -q
+
+      - name: Generate data and dbt build (two loads, SCD2 snapshot)
+        run: make history
+
+      - name: dbt docs
+        run: make docs

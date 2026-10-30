@@ -1,0 +1,393 @@
+models:
+  - name: fct_orders
+    description: >
+      One row per order: amounts, payment reconciliation, purchase session attribution and the
+      customer's loyalty tier / country at order time (point-in-time join to the SCD2 history).
+      `net_revenue` is merchandise revenue after discounts, excluding shipping, and zero for
+      cancelled or returned orders.
+    data_tests:
+      - equal_row_count:
+          arguments:
+            compare_model: ref('stg_shop__orders')
+    columns:
+      - name: order_id
+        description: Primary key.
+        data_tests: [unique, not_null]
+      - name: customer_id
+        description: Ordering customer.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_customers')
+                field: customer_id
+      - name: order_status
+        description: Lifecycle status at load time.
+      - name: channel
+        description: web or app.
+      - name: placed_at
+        description: Order time (UTC).
+      - name: order_date
+        description: Calendar date of the order.
+      - name: order_month
+        description: First day of the order's month.
+      - name: line_count
+        description: Order lines.
+      - name: units
+        description: Units ordered.
+      - name: gross_amount
+        description: Sum of quantity x unit_price.
+      - name: discount_amount
+        description: Promotion discounts.
+      - name: items_subtotal
+        description: Merchandise amount after discounts.
+      - name: shipping_amount
+        description: Shipping fee.
+      - name: order_total
+        description: items_subtotal + shipping_amount; what the customer is charged.
+        data_tests: [non_negative]
+      - name: cogs
+        description: Cost of goods.
+      - name: is_reversed
+        description: True for cancelled or returned orders.
+      - name: is_cancelled
+        description: Cancelled before shipping.
+      - name: is_returned
+        description: Returned after delivery.
+      - name: charged_amount
+        description: Succeeded charges.
+      - name: refunded_amount
+        description: Succeeded refunds.
+      - name: net_paid
+        description: charged_amount - refunded_amount (reconciled by a singular test).
+      - name: failed_charges
+        description: Declined payment attempts.
+      - name: payment_methods
+        description: Methods with a captured charge.
+      - name: purchase_device
+        description: Device of the session that created the order.
+      - name: purchase_utm_source
+        description: Traffic source of that session.
+      - name: loyalty_tier_at_order
+        description: Loyalty tier valid at `placed_at` according to the snapshot history.
+        data_tests: [not_null]
+      - name: country_code_at_order
+        description: Customer country valid at `placed_at`.
+      - name: customer_order_number
+        description: 1 for the customer's first order, 2 for the second, ...
+      - name: days_since_previous_order
+        description: Days since the customer's previous order; null for the first.
+      - name: is_first_order
+        description: customer_order_number = 1.
+      - name: net_revenue
+        description: Merchandise revenue kept (0 when reversed).
+      - name: gross_margin
+        description: net revenue - cogs (0 when reversed).
+
+  - name: fct_order_items
+    description: One row per order line with order context and kept revenue / margin.
+    columns:
+      - name: order_item_id
+        description: Primary key.
+        data_tests: [unique, not_null]
+      - name: order_id
+        description: Parent order.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('fct_orders')
+                field: order_id
+      - name: customer_id
+        description: Ordering customer.
+      - name: product_id
+        description: Product sold.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_products')
+                field: product_id
+      - name: product_name
+        description: Product display name.
+      - name: category
+        description: Product category.
+      - name: placed_at
+        description: Order time.
+      - name: order_date
+        description: Order date.
+      - name: order_month
+        description: Order month.
+      - name: order_status
+        description: Status of the parent order.
+      - name: is_reversed
+        description: Parent order cancelled or returned.
+      - name: quantity
+        description: Units.
+      - name: unit_price
+        description: Price per unit charged.
+      - name: gross_amount
+        description: quantity x unit_price.
+      - name: discount_amount
+        description: Line discount.
+      - name: line_total
+        description: Amount charged for the line.
+      - name: cogs
+        description: Cost of goods for the line.
+      - name: net_revenue
+        description: line_total, or 0 when the order was reversed.
+      - name: gross_margin
+        description: Line margin, or 0 when the order was reversed.
+
+  - name: dim_customers
+    description: >
+      Current customer attributes with order behaviour and a lifecycle status
+      (prospect / active / lapsed / churned) measured against the latest order in the data.
+    columns:
+      - name: customer_id
+        description: Primary key.
+        data_tests: [unique, not_null]
+      - name: first_name
+        description: Given name.
+      - name: last_name
+        description: Family name.
+      - name: email
+        description: Normalised e-mail.
+      - name: country_code
+        description: Current country.
+      - name: acquisition_channel
+        description: First-touch marketing channel.
+      - name: loyalty_tier
+        description: Current loyalty tier.
+      - name: signup_at
+        description: Account creation time.
+      - name: cohort_month
+        description: Month of the first order (null for prospects).
+      - name: first_order_at
+        description: First order time.
+      - name: last_order_at
+        description: Most recent order time.
+      - name: orders_placed
+        description: All orders including cancelled / returned.
+      - name: orders_kept
+        description: Orders neither cancelled nor returned.
+      - name: lifetime_net_revenue
+        description: Sum of net revenue.
+        data_tests: [non_negative]
+      - name: lifetime_gross_margin
+        description: Sum of gross margin.
+      - name: days_since_last_order
+        description: Days between the last order and the newest order in the data.
+      - name: lifecycle_status
+        description: Based on `lapsed_after_days` / `churned_after_days` project vars.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [prospect, active, lapsed, churned]
+
+  - name: dim_customers_history
+    description: >
+      SCD2 customer dimension from `snap_customers`, with half-open validity windows
+      [valid_from, valid_to). The first version of each customer starts at 1900-01-01.
+    columns:
+      - name: customer_version_id
+        description: Primary key (dbt_scd_id).
+        data_tests: [unique, not_null]
+      - name: customer_id
+        description: Business key.
+        data_tests: [not_null]
+      - name: version_number
+        description: 1 for the oldest observed version.
+      - name: email
+        description: E-mail during the window.
+      - name: country_code
+        description: Country during the window.
+      - name: loyalty_tier
+        description: Loyalty tier during the window.
+      - name: recorded_from
+        description: When this version was first observed (dbt_valid_from).
+      - name: valid_from
+        description: Window start (inclusive).
+      - name: valid_to
+        description: Window end (exclusive); 9999-12-31 for the current version.
+      - name: is_current
+        description: True for the open version.
+
+  - name: dim_products
+    description: Product catalogue with lifetime sales, margin and return rate.
+    columns:
+      - name: product_id
+        description: Primary key.
+        data_tests: [unique, not_null]
+      - name: sku
+        description: Stock keeping unit.
+      - name: product_name
+        description: Display name.
+      - name: category
+        description: Category.
+      - name: unit_price
+        description: Current list price.
+      - name: unit_cost
+        description: Unit cost.
+      - name: unit_margin
+        description: unit_price - unit_cost.
+      - name: is_active
+        description: False when discontinued.
+      - name: created_at
+        description: Listing time.
+      - name: orders
+        description: Orders containing the product.
+      - name: units_sold
+        description: Units in orders that were not reversed.
+      - name: net_revenue
+        description: Kept revenue.
+      - name: gross_margin
+        description: Kept margin.
+      - name: return_rate
+        description: Returned lines / delivered-or-returned lines.
+        data_tests:
+          - accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+      - name: first_sold_at
+        description: First order time.
+      - name: last_sold_at
+        description: Last order time.
+
+  - name: customer_lifetime_value
+    description: >
+      One row per customer with at least one order: historical value, RFM scores and segment,
+      and a deliberately naive 12-month margin projection (see the model SQL).
+    columns:
+      - name: customer_id
+        description: Primary key.
+        data_tests:
+          - unique
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_customers')
+                field: customer_id
+      - name: cohort_month
+        description: Month of the first order.
+      - name: first_order_at
+        description: First order time.
+      - name: last_order_at
+        description: Last order time.
+      - name: lifecycle_status
+        description: active / lapsed / churned.
+      - name: tenure_days
+        description: Days from the first order to the newest order in the data (min 1).
+      - name: recency_days
+        description: Days since the last order.
+      - name: kept_orders
+        description: Orders neither cancelled nor returned.
+      - name: net_revenue
+        description: Lifetime net revenue.
+      - name: gross_margin
+        description: Lifetime gross margin.
+      - name: avg_order_value
+        description: net_revenue / kept_orders.
+      - name: orders_per_month
+        description: kept_orders per 30.4-day month of tenure.
+      - name: recency_score
+        description: 1-5, 5 = most recent.
+        data_tests:
+          - accepted_range:
+              arguments: {min_value: 1, max_value: 5}
+      - name: frequency_score
+        description: 1-5, 5 = most orders.
+      - name: monetary_score
+        description: 1-5, 5 = highest revenue.
+      - name: rfm_segment
+        description: Rule-based segment from the three scores.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [champion, loyal, at_risk, new_or_promising, hibernating, needs_attention]
+      - name: historical_clv
+        description: Gross margin to date.
+      - name: expected_12m_margin
+        description: Naive projection; zero unless the customer is active.
+
+  - name: fct_conversion_funnel
+    description: >
+      Session funnel by day, device and traffic source: sessions reaching product view, cart,
+      checkout and purchase, with step-to-step conversion rates.
+    columns:
+      - name: session_date
+        description: Date the session started.
+        data_tests: [not_null]
+      - name: device
+        description: desktop, mobile_web or app.
+      - name: utm_source
+        description: Traffic source.
+      - name: sessions
+        description: Sessions.
+      - name: logged_in_sessions
+        description: Sessions with a known customer.
+      - name: product_view_sessions
+        description: Sessions with a product view.
+      - name: add_to_cart_sessions
+        description: Sessions with an add-to-cart.
+      - name: checkout_sessions
+        description: Sessions that began checkout.
+      - name: purchase_sessions
+        description: Sessions that purchased.
+      - name: view_rate
+        description: product_view_sessions / sessions.
+      - name: view_to_cart_rate
+        description: add_to_cart_sessions / product_view_sessions.
+      - name: cart_to_checkout_rate
+        description: checkout_sessions / add_to_cart_sessions.
+      - name: checkout_to_purchase_rate
+        description: purchase_sessions / checkout_sessions.
+      - name: session_conversion_rate
+        description: purchase_sessions / sessions.
+        data_tests:
+          - accepted_range:
+              arguments: {min_value: 0, max_value: 1}
+
+  - name: fct_cohort_retention
+    description: >
+      Monthly first-order cohorts x months since first order, with active customers, retention
+      rate and cumulative revenue per customer. Recent cohorts have fewer observed months.
+    columns:
+      - name: cohort_month
+        description: Month of the customers' first non-cancelled order.
+        data_tests: [not_null]
+      - name: month_number
+        description: Calendar months since the cohort month (0 = the cohort month).
+      - name: activity_month
+        description: cohort_month + month_number.
+      - name: cohort_size
+        description: Customers in the cohort.
+      - name: active_customers
+        description: Cohort customers with a non-cancelled order in the activity month.
+      - name: retention_rate
+        description: active_customers / cohort_size.
+        data_tests:
+          - accepted_range:
+              arguments: {min_value: 0, max_value: 1}
+      - name: net_revenue
+        description: Kept revenue of the cohort in the activity month.
+      - name: cumulative_revenue_per_customer
+        description: Running net revenue per cohort member up to this month.
+
+unit_tests:
+  - name: cohort_retention_fills_empty_months
+    description: >
+      Two customers in the January cohort, one returns in March. February must appear with
+      zero retention; cancelled orders are not activity.
+    model: fct_cohort_retention
+    given:
+      - input: ref('fct_orders')
+        rows:
+          - {customer_id: 1, order_month: "2026-01-01", net_revenue: 100.00, is_cancelled: false}
+          - {customer_id: 2, order_month: "2026-01-01", net_revenue: 50.00, is_cancelled: false}
+          - {customer_id: 2, order_month: "2026-02-01", net_revenue: 0.00, is_cancelled: true}
+          - {customer_id: 1, order_month: "2026-03-01", net_revenue: 40.00, is_cancelled: false}
+    expect:
+      rows:
+        - {cohort_month: "2026-01-01", month_number: 0, cohort_size: 2, active_customers: 2, retention_rate: 1.0, cumulative_revenue_per_customer: 75.0}
+        - {cohort_month: "2026-01-01", month_number: 1, cohort_size: 2, active_customers: 0, retention_rate: 0.0, cumulative_revenue_per_customer: 75.0}
+        - {cohort_month: "2026-01-01", month_number: 2, cohort_size: 2, active_customers: 1, retention_rate: 0.5, cumulative_revenue_per_customer: 95.0}
